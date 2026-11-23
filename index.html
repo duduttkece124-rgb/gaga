@@ -1,0 +1,806 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Dick Dodger — Multiplayer App</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  body {
+    background: #0c0f16;
+    color: #e6ecf5;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100dvh;
+    padding: 10px;
+    gap: 8px;
+    overflow-x: hidden;
+  }
+  .top-bar {
+    width: 100%;
+    max-width: 860px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    justify-content: space-between;
+    background: #141925;
+    border: 1px solid #262f45;
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 12px;
+  }
+  .group { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  input, select, button {
+    background: #1c2333;
+    color: #eef3fb;
+    border: 1px solid #323e59;
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-family: inherit;
+    font-size: 12px;
+  }
+  button { cursor: pointer; font-weight: 600; }
+  button:hover { background: #263047; }
+  button.active { background: #2563eb; border-color: #3b82f6; color: #fff; }
+  .hud {
+    width: 100%;
+    max-width: 860px;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 6px 12px;
+    background: #121722;
+    border: 1px solid #222a3d;
+    border-radius: 8px;
+    font-size: 12px;
+    color: #9fb0c9;
+  }
+  .hud strong { color: #f8fafc; }
+  canvas {
+    width: 100%;
+    max-width: 860px;
+    aspect-ratio: 860 / 480;
+    max-height: 60dvh;
+    background: #131824;
+    border: 1px solid #2a344d;
+    border-radius: 8px;
+    display: block;
+    touch-action: none;
+  }
+  .controls {
+    width: 100%;
+    max-width: 860px;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 12px;
+    align-items: center;
+    padding: 6px;
+  }
+  .pad {
+    display: grid;
+    grid-template-columns: repeat(3, 46px);
+    grid-template-rows: repeat(2, 42px);
+    gap: 5px;
+  }
+  .pad button { padding: 0; font-size: 14px; }
+  .pad .up { grid-column: 2; grid-row: 1; }
+  .pad .left { grid-column: 1; grid-row: 2; }
+  .pad .down { grid-column: 2; grid-row: 2; }
+  .pad .right { grid-column: 3; grid-row: 2; }
+  .actions { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+  .btn-fire { background: #1d4ed8; border-color: #3b82f6; padding: 10px 14px; }
+  .btn-thrust { background: #0f766e; border-color: #14b8a6; padding: 10px 12px; }
+  .btn-skill { background: #7e22ce; border-color: #a855f7; padding: 10px 12px; }
+  .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #f59e0b; margin-right: 5px; }
+  .status-dot.ok { background: #22c55e; }
+</style>
+</head>
+<body>
+  <div class="top-bar">
+    <div class="group">
+      <span class="status-dot" id="netDot"></span>
+      <span id="netStatus">LOCAL / STANDALONE</span>
+      <input id="nameInput" type="text" value="Player" maxlength="12" style="width:88px" placeholder="Nama">
+      <input id="roomInput" type="text" value="ROOM01" maxlength="8" style="width:76px" placeholder="Room">
+      <button id="joinBtn">JOIN ROOM</button>
+      <button id="localBtn" class="active">OFFLINE</button>
+    </div>
+    <div class="group">
+      <button id="szSmall" data-sz="small">KECIL</button>
+      <button id="szMed" data-sz="medium" class="active">SEDANG</button>
+      <button id="szBig" data-sz="large">BESAR</button>
+      <button id="restartBtn">RESET (R)</button>
+    </div>
+  </div>
+
+  <div class="hud">
+    <div>WAVE: <strong id="hudWave">1/8</strong> (<span id="hudTier">MUDAH</span>)</div>
+    <div>SKOR: <strong id="hudScore">0</strong> | BOSS HP: <strong id="hudBoss">-</strong></div>
+    <div>PEMAIN: <strong id="hudPlayers">1</strong></div>
+  </div>
+
+  <canvas id="game" width="860" height="480"></canvas>
+
+  <div class="controls">
+    <div class="pad">
+      <button class="up" data-key="KeyW">▲</button>
+      <button class="left" data-key="KeyA">◀</button>
+      <button class="down" data-key="KeyS">▼</button>
+      <button class="right" data-key="KeyD">▶</button>
+    </div>
+    <div class="actions">
+      <button class="btn-fire" id="fireBtn">TEMBAK</button>
+      <button class="btn-thrust" id="thrustBtn">THRUST</button>
+      <button class="btn-skill" id="skillBtn">SKILL (E)</button>
+    </div>
+  </div>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const W = canvas.width;
+const H = canvas.height;
+
+const netDot = document.getElementById('netDot');
+const netStatus = document.getElementById('netStatus');
+const nameInput = document.getElementById('nameInput');
+const roomInput = document.getElementById('roomInput');
+const joinBtn = document.getElementById('joinBtn');
+const localBtn = document.getElementById('localBtn');
+const restartBtn = document.getElementById('restartBtn');
+const fireBtn = document.getElementById('fireBtn');
+const thrustBtn = document.getElementById('thrustBtn');
+const skillBtn = document.getElementById('skillBtn');
+
+const hudWave = document.getElementById('hudWave');
+const hudTier = document.getElementById('hudTier');
+const hudScore = document.getElementById('hudScore');
+const hudBoss = document.getElementById('hudBoss');
+const hudPlayers = document.getElementById('hudPlayers');
+
+const SIZE_CONFIG = {
+  small:  { label: 'KECIL',  scale: 0.72, speed: 340, fireCd: 0.14, skillCd: 3.0 },
+  medium: { label: 'SEDANG', scale: 1.00, speed: 275, fireCd: 0.20, skillCd: 4.0 },
+  large:  { label: 'BESAR',  scale: 1.32, speed: 220, fireCd: 0.26, skillCd: 4.5 }
+};
+
+let ws = null;
+let onlineMode = false;
+let clientId = 'local-' + Math.random().toString(36).slice(2, 7);
+let selectedSize = 'medium';
+const keys = new Set();
+let firingHeld = false;
+let lastTime = performance.now();
+let netSyncTimer = 0;
+
+let state = createInitialState();
+
+function createInitialState() {
+  return {
+    wave: 1,
+    score: 0,
+    gameOver: false,
+    victory: false,
+    players: {
+      [clientId]: createPlayer(clientId, nameInput.value.trim() || 'Player', W * 0.18, H * 0.5, selectedSize)
+    },
+    enemies: [],
+    boss: spawnBossForWave(1),
+    projectiles: [],
+    enemyShots: [],
+    particles: [],
+    shake: 0
+  };
+}
+
+function createPlayer(id, name, x, y, sizeKey) {
+  return {
+    id,
+    name,
+    x,
+    y,
+    vx: 0,
+    vy: 0,
+    angle: 0,
+    hp: 3,
+    invuln: 0,
+    fireCd: 0,
+    thrustCd: 0,
+    skillCd: 0,
+    size: sizeKey,
+    alive: true
+  };
+}
+
+function getTierName(wave) {
+  if (wave <= 3) return 'MUDAH';
+  if (wave <= 5) return 'SEDANG';
+  return 'SULIT';
+}
+
+function spawnBossForWave(wave) {
+  const maxHp = 90 + wave * 45;
+  return {
+    wave,
+    name: `BOS WAVE ${wave}`,
+    x: W * 0.78,
+    y: H * 0.5,
+    baseY: H * 0.5,
+    hp: maxHp,
+    maxHp,
+    atkTimer: 1.4,
+    phase: 0,
+    hitFlash: 0
+  };
+}
+
+function spawnEnemyForWave(wave) {
+  const tier = getTierName(wave);
+  const baseSpeed = tier === 'MUDAH' ? 95 : tier === 'SEDANG' ? 140 : 195;
+  return {
+    id: Math.random().toString(36).slice(2, 8),
+    x: W + 28,
+    y: 45 + Math.random() * (H - 90),
+    vx: -(baseSpeed + Math.random() * 55),
+    vy: (Math.random() - 0.5) * (tier === 'SULIT' ? 130 : 60),
+    hp: tier === 'MUDAH' ? 2 : tier === 'SEDANG' ? 3 : 4,
+    angle: Math.PI
+  };
+}
+
+function addParticles(x, y, color, count, speedMax = 210) {
+  for (let i = 0; i < count; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const sp = 35 + Math.random() * speedMax;
+    state.particles.push({
+      x, y,
+      vx: Math.cos(a) * sp,
+      vy: Math.sin(a) * sp,
+      life: 0.25 + Math.random() * 0.35,
+      color,
+      r: 2 + Math.random() * 3
+    });
+  }
+}
+
+function fireWhiteFluid(p) {
+  if (!p.alive || p.fireCd > 0) return;
+  const cfg = SIZE_CONFIG[p.size] || SIZE_CONFIG.medium;
+  p.fireCd = cfg.fireCd;
+  const tipDist = 28 * cfg.scale;
+  const sx = p.x + Math.cos(p.angle) * tipDist;
+  const sy = p.y + Math.sin(p.angle) * tipDist;
+  state.projectiles.push({
+    ownerId: p.id,
+    x: sx,
+    y: sy,
+    vx: Math.cos(p.angle) * 520,
+    vy: Math.sin(p.angle) * 520,
+    r: 5.5 * cfg.scale,
+    dmg: p.size === 'large' ? 2.2 : p.size === 'medium' ? 1.5 : 1.0,
+    life: 1.5
+  });
+  addParticles(sx, sy, '#f8fafc', 4, 80);
+}
+
+function doThrust(p) {
+  if (!p.alive || p.thrustCd > 0) return;
+  p.thrustCd = 0.65;
+  p.vx += Math.cos(p.angle) * 320;
+  p.vy += Math.sin(p.angle) * 320;
+  addParticles(p.x, p.y, '#38bdf8', 10, 150);
+}
+
+function doSkill(p) {
+  if (!p.alive || p.skillCd > 0) return;
+  const cfg = SIZE_CONFIG[p.size] || SIZE_CONFIG.medium;
+  p.skillCd = cfg.skillCd;
+
+  if (p.size === 'small') {
+    for (let i = -2; i <= 2; i++) {
+      const ang = p.angle + i * 0.14;
+      state.projectiles.push({
+        ownerId: p.id,
+        x: p.x + Math.cos(ang) * 24,
+        y: p.y + Math.sin(ang) * 24,
+        vx: Math.cos(ang) * 590,
+        vy: Math.sin(ang) * 590,
+        r: 4.5,
+        dmg: 1.2,
+        life: 1.3
+      });
+    }
+    addParticles(p.x, p.y, '#c084fc', 14, 190);
+  } else if (p.size === 'medium') {
+    p.invuln = Math.max(p.invuln, 1.4);
+    for (let k = 0; k < 12; k++) {
+      const ang = (Math.PI * 2 * k) / 12;
+      state.projectiles.push({
+        ownerId: p.id,
+        x: p.x,
+        y: p.y,
+        vx: Math.cos(ang) * 440,
+        vy: Math.sin(ang) * 440,
+        r: 5.5,
+        dmg: 1.4,
+        life: 1.1
+      });
+    }
+    addParticles(p.x, p.y, '#f8fafc', 18, 220);
+  } else {
+    state.shake = Math.max(state.shake, 10);
+    for (const en of state.enemies) {
+      if (Math.hypot(en.x - p.x, en.y - p.y) < 220) en.hp -= 3;
+    }
+    if (state.boss && Math.hypot(state.boss.x - p.x, state.boss.y - p.y) < 260) {
+      state.boss.hp -= 18;
+      state.boss.hitFlash = 0.2;
+    }
+    addParticles(p.x, p.y, '#f8fafc', 28, 280);
+  }
+}
+
+function damagePlayer(p) {
+  if (!p.alive || p.invuln > 0) return;
+  p.hp -= 1;
+  p.invuln = 1.25;
+  state.shake = Math.max(state.shake, 9);
+  addParticles(p.x, p.y, '#ef4444', 18, 220);
+
+  if (p.hp <= 0) {
+    p.alive = false;
+    addParticles(p.x, p.y, '#f97316', 36, 280);
+    const anyAlive = Object.values(state.players).some(pl => pl.alive);
+    if (!anyAlive) state.gameOver = true;
+  }
+}
+
+function updateLocalSimulation(dt) {
+  if (state.gameOver || state.victory) return;
+
+  if (state.shake > 0) state.shake = Math.max(0, state.shake - dt * 28);
+
+  const me = state.players[clientId];
+  if (me && me.alive) {
+    me.size = selectedSize;
+    me.name = nameInput.value.trim() || 'Player';
+    const cfg = SIZE_CONFIG[me.size] || SIZE_CONFIG.medium;
+
+    let ix = 0, iy = 0;
+    if (keys.has('KeyA') || keys.has('ArrowLeft')) ix -= 1;
+    if (keys.has('KeyD') || keys.has('ArrowRight')) ix += 1;
+    if (keys.has('KeyW') || keys.has('ArrowUp')) iy -= 1;
+    if (keys.has('KeyS') || keys.has('ArrowDown')) iy += 1;
+
+    if (ix !== 0 || iy !== 0) {
+      const len = Math.hypot(ix, iy);
+      me.vx += (ix / len) * cfg.speed * 7 * dt;
+      me.vy += (iy / len) * cfg.speed * 7 * dt;
+      me.angle = Math.atan2(iy / len, ix / len);
+    }
+    if (firingHeld) fireWhiteFluid(me);
+  }
+
+  for (const p of Object.values(state.players)) {
+    if (!p.alive) continue;
+    if (p.fireCd > 0) p.fireCd = Math.max(0, p.fireCd - dt);
+    if (p.thrustCd > 0) p.thrustCd = Math.max(0, p.thrustCd - dt);
+    if (p.skillCd > 0) p.skillCd = Math.max(0, p.skillCd - dt);
+    if (p.invuln > 0) p.invuln = Math.max(0, p.invuln - dt);
+
+    const damp = Math.exp(-7 * dt);
+    p.vx *= damp;
+    p.vy *= damp;
+    p.x = Math.max(26, Math.min(W - 26, p.x + p.vx * dt));
+    p.y = Math.max(26, Math.min(H - 26, p.y + p.vy * dt));
+  }
+
+  const maxEnemies = state.wave <= 3 ? 2 : state.wave <= 5 ? 4 : 6;
+  if (state.enemies.length < maxEnemies && Math.random() < dt * (0.9 + state.wave * 0.25)) {
+    state.enemies.push(spawnEnemyForWave(state.wave));
+  }
+
+  for (let i = state.enemies.length - 1; i >= 0; i--) {
+    const en = state.enemies[i];
+    en.x += en.vx * dt;
+    en.y += en.vy * dt;
+    if (en.y < 30 || en.y > H - 30) en.vy *= -1;
+    if (en.x < -35) { state.enemies.splice(i, 1); continue; }
+
+    for (const p of Object.values(state.players)) {
+      if (p.alive && Math.hypot(en.x - p.x, en.y - p.y) < 30) {
+        damagePlayer(p);
+        en.hp -= 2;
+      }
+    }
+    if (en.hp <= 0) {
+      state.score += 15;
+      addParticles(en.x, en.y, '#f8fafc', 10, 160);
+      state.enemies.splice(i, 1);
+    }
+  }
+
+  const boss = state.boss;
+  if (boss) {
+    if (boss.hitFlash > 0) boss.hitFlash = Math.max(0, boss.hitFlash - dt);
+    boss.y = boss.baseY + Math.sin(performance.now() * 0.002 + boss.wave) * (65 + boss.wave * 8);
+    boss.atkTimer -= dt;
+
+    if (boss.atkTimer <= 0) {
+      const tier = getTierName(state.wave);
+      boss.atkTimer = tier === 'MUDAH' ? 1.6 : tier === 'SEDANG' ? 1.15 : 0.82;
+      boss.phase = (boss.phase + 1) % 3;
+
+      const targets = Object.values(state.players).filter(pl => pl.alive);
+      const tgt = targets[boss.phase % Math.max(1, targets.length)] || { x: W * 0.2, y: H * 0.5 };
+      const aim = Math.atan2(tgt.y - boss.y, tgt.x - boss.x);
+      const count = boss.phase === 2 ? 9 : (tier === 'SULIT' ? 5 : 3);
+      const spread = boss.phase === 2 ? Math.PI * 2 : 0.55;
+
+      for (let k = 0; k < count; k++) {
+        const ang = boss.phase === 2
+          ? (Math.PI * 2 * k) / count + boss.wave * 0.4
+          : aim + ((count === 1 ? 0 : (k / (count - 1)) - 0.5) * spread);
+        state.enemyShots.push({
+          x: boss.x - 24,
+          y: boss.y,
+          vx: Math.cos(ang) * (220 + state.wave * 18),
+          vy: Math.sin(ang) * (220 + state.wave * 18),
+          r: 6
+        });
+      }
+    }
+
+    if (boss.hp <= 0) {
+      state.score += 100 * state.wave;
+      state.shake = 12;
+      addParticles(boss.x, boss.y, '#ef4444', 40, 290);
+      state.enemyShots = [];
+
+      if (state.wave >= 8) {
+        state.victory = true;
+        state.boss = null;
+      } else {
+        state.wave += 1;
+        state.boss = spawnBossForWave(state.wave);
+        for (const p of Object.values(state.players)) {
+          if (p.alive) p.hp = Math.min(3, p.hp + 1);
+        }
+      }
+    }
+  }
+
+  for (let i = state.projectiles.length - 1; i >= 0; i--) {
+    const pr = state.projectiles[i];
+    pr.x += pr.vx * dt;
+    pr.y += pr.vy * dt;
+    pr.life -= dt;
+    if (pr.life <= 0 || pr.x < -20 || pr.x > W + 20 || pr.y < -20 || pr.y > H + 20) {
+      state.projectiles.splice(i, 1);
+      continue;
+    }
+
+    let hit = false;
+    for (const en of state.enemies) {
+      if (Math.hypot(pr.x - en.x, pr.y - en.y) < pr.r + 18) {
+        en.hp -= pr.dmg;
+        addParticles(pr.x, pr.y, '#f8fafc', 5, 110);
+        hit = true;
+        break;
+      }
+    }
+    if (!hit && state.boss && Math.hypot(pr.x - state.boss.x, pr.y - state.boss.y) < pr.r + 36) {
+      state.boss.hp -= pr.dmg;
+      state.boss.hitFlash = 0.08;
+      state.score += 2;
+      addParticles(pr.x, pr.y, '#f8fafc', 6, 120);
+      hit = true;
+    }
+    if (hit) state.projectiles.splice(i, 1);
+  }
+
+  for (let i = state.enemyShots.length - 1; i >= 0; i--) {
+    const es = state.enemyShots[i];
+    es.x += es.vx * dt;
+    es.y += es.vy * dt;
+    if (es.x < -20 || es.x > W + 20 || es.y < -20 || es.y > H + 20) {
+      state.enemyShots.splice(i, 1);
+      continue;
+    }
+    for (const p of Object.values(state.players)) {
+      if (p.alive && Math.hypot(es.x - p.x, es.y - p.y) < es.r + 14) {
+        damagePlayer(p);
+        state.enemyShots.splice(i, 1);
+        break;
+      }
+    }
+  }
+
+  for (let i = state.particles.length - 1; i >= 0; i--) {
+    const pt = state.particles[i];
+    pt.x += pt.vx * dt;
+    pt.y += pt.vy * dt;
+    pt.life -= dt;
+    if (pt.life <= 0) state.particles.splice(i, 1);
+  }
+}
+
+function drawDickEntity(x, y, angle, scale, colorMain, colorHead, label, hp, maxHp) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle);
+  ctx.scale(scale, scale);
+
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = '#141822';
+
+  // Balls
+  ctx.fillStyle = colorMain;
+  ctx.beginPath();
+  ctx.arc(-16, -8, 8.5, 0, Math.PI * 2);
+  ctx.arc(-16, 8, 8.5, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  // Shaft
+  ctx.beginPath();
+  ctx.roundRect(-14, -7.5, 28, 15, 5);
+  ctx.fill();
+  ctx.stroke();
+
+  // Glans
+  ctx.fillStyle = colorHead;
+  ctx.beginPath();
+  ctx.ellipse(17, 0, 8.5, 8, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.restore();
+
+  if (label || typeof hp === 'number') {
+    ctx.font = '11px ui-monospace, monospace';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#e2e8f0';
+    const hpText = typeof hp === 'number' ? ` ♥${hp}${maxHp ? '/' + maxHp : ''}` : '';
+    ctx.fillText(`${label || ''}${hpText}`, x, y - 24 * scale);
+  }
+}
+
+function render() {
+  ctx.save();
+  if (state.shake > 0) {
+    ctx.translate((Math.random() - 0.5) * state.shake, (Math.random() - 0.5) * state.shake);
+  }
+  ctx.clearRect(0, 0, W, H);
+
+  // Arena grid
+  ctx.strokeStyle = '#1b2232';
+  ctx.lineWidth = 1;
+  for (let gx = 0; gx < W; gx += 43) {
+    ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, H); ctx.stroke();
+  }
+  for (let gy = 0; gy < H; gy += 48) {
+    ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(W, gy); ctx.stroke();
+  }
+
+  // Hostile dick enemies
+  for (const en of state.enemies) {
+    drawDickEntity(en.x, en.y, en.angle, 0.95, '#991b1b', '#ef4444', 'FOE', Math.ceil(en.hp), null);
+  }
+
+  // Wave boss
+  if (state.boss) {
+    const b = state.boss;
+    const cMain = b.hitFlash > 0 ? '#ffffff' : '#7f1d1d';
+    const cHead = b.hitFlash > 0 ? '#fef08a' : '#dc2626';
+    drawDickEntity(b.x, b.y, Math.PI, 1.9, cMain, cHead, b.name, Math.ceil(b.hp), b.maxHp);
+  }
+
+  // Players
+  for (const p of Object.values(state.players)) {
+    if (!p.alive) continue;
+    const cfg = SIZE_CONFIG[p.size] || SIZE_CONFIG.medium;
+    const blink = p.invuln > 0 && Math.floor(p.invuln * 16) % 2 === 0;
+    if (!blink) {
+      drawDickEntity(p.x, p.y, p.angle, cfg.scale, '#e7a895', '#f5c2b3', p.name, p.hp, 3);
+    }
+  }
+
+  // White fluid projectiles
+  for (const pr of state.projectiles) {
+    ctx.fillStyle = '#f8fafc';
+    ctx.beginPath();
+    ctx.arc(pr.x, pr.y, pr.r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Boss/enemy shots
+  for (const es of state.enemyShots) {
+    ctx.fillStyle = '#fb7185';
+    ctx.beginPath();
+    ctx.arc(es.x, es.y, es.r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Particles
+  for (const pt of state.particles) {
+    ctx.globalAlpha = Math.max(0, pt.life * 2.2);
+    ctx.fillStyle = pt.color;
+    ctx.beginPath();
+    ctx.arc(pt.x, pt.y, pt.r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  if (state.gameOver || state.victory) {
+    ctx.fillStyle = 'rgba(10, 13, 20, 0.78)';
+    ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = state.victory ? '#4ade80' : '#f87171';
+    ctx.font = '700 26px ui-monospace, monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(state.victory ? 'MENANG SEMUA 8 WAVE!' : 'KALAH — SEMUA NYAWA HABIS', W / 2, H / 2 - 12);
+    ctx.fillStyle = '#cbd5e1';
+    ctx.font = '13px ui-monospace, monospace';
+    ctx.fillText(`SKOR AKHIR: ${state.score} — TEKAN R UNTUK ULANG`, W / 2, H / 2 + 18);
+  }
+
+  ctx.restore();
+
+  hudWave.textContent = `${state.wave}/8`;
+  hudTier.textContent = getTierName(state.wave);
+  hudScore.textContent = String(state.score);
+  hudBoss.textContent = state.boss ? `${Math.max(0, Math.ceil(state.boss.hp))}/${state.boss.maxHp}` : '-';
+  hudPlayers.textContent = String(Object.keys(state.players).length);
+}
+
+function connectMultiplayer() {
+  const room = (roomInput.value.trim() || 'ROOM01').toUpperCase();
+  const pname = nameInput.value.trim() || 'Player';
+  if (ws) { ws.close(); ws = null; }
+
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const url = `${proto}//${location.host}/ws?room=${encodeURIComponent(room)}&id=${encodeURIComponent(clientId)}&name=${encodeURIComponent(pname)}&size=${encodeURIComponent(selectedSize)}`;
+
+  try {
+    ws = new WebSocket(url);
+  } catch (_) {
+    netStatus.textContent = 'WS GAGAL — TETAP OFFLINE';
+    return;
+  }
+
+  ws.onopen = () => {
+    onlineMode = true;
+    localBtn.classList.remove('active');
+    joinBtn.classList.add('active');
+    netDot.classList.add('ok');
+    netStatus.textContent = `ONLINE ROOM: ${room}`;
+  };
+
+  ws.onmessage = (ev) => {
+    try {
+      const msg = JSON.parse(ev.data);
+      if (msg.type === 'state' && msg.state) {
+        state = msg.state;
+      }
+    } catch (_) {}
+  };
+
+  ws.onclose = () => {
+    onlineMode = false;
+    netDot.classList.remove('ok');
+    netStatus.textContent = 'OFFLINE (SERVER BELUM JALAN)';
+  };
+}
+
+function sendInputToServer() {
+  if (!onlineMode || !ws || ws.readyState !== WebSocket.OPEN) return;
+  let ix = 0, iy = 0;
+  if (keys.has('KeyA') || keys.has('ArrowLeft')) ix -= 1;
+  if (keys.has('KeyD') || keys.has('ArrowRight')) ix += 1;
+  if (keys.has('KeyW') || keys.has('ArrowUp')) iy -= 1;
+  if (keys.has('KeyS') || keys.has('ArrowDown')) iy += 1;
+
+  ws.send(JSON.stringify({
+    type: 'input',
+    id: clientId,
+    name: nameInput.value.trim() || 'Player',
+    size: selectedSize,
+    ix, iy,
+    fire: firingHeld
+  }));
+}
+
+function triggerAction(action) {
+  const me = state.players[clientId];
+  if (onlineMode && ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: action, id: clientId, size: selectedSize }));
+  }
+  if (!onlineMode && me) {
+    if (action === 'thrust') doThrust(me);
+    if (action === 'skill') doSkill(me);
+    if (action === 'fire') fireWhiteFluid(me);
+  }
+}
+
+function loop(now) {
+  const dt = Math.min(0.05, (now - lastTime) / 1000);
+  lastTime = now;
+
+  if (!onlineMode) {
+    updateLocalSimulation(dt);
+  } else {
+    netSyncTimer += dt;
+    if (netSyncTimer >= 0.04) {
+      netSyncTimer = 0;
+      sendInputToServer();
+    }
+  }
+
+  render();
+  requestAnimationFrame(loop);
+}
+
+joinBtn.addEventListener('click', connectMultiplayer);
+localBtn.addEventListener('click', () => {
+  if (ws) { ws.close(); ws = null; }
+  onlineMode = false;
+  localBtn.classList.add('active');
+  joinBtn.classList.remove('active');
+  netDot.classList.remove('ok');
+  netStatus.textContent = 'OFFLINE / STANDALONE';
+});
+
+restartBtn.addEventListener('click', () => {
+  if (onlineMode && ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'reset' }));
+  } else {
+    state = createInitialState();
+  }
+});
+
+for (const btn of document.querySelectorAll('[data-sz]')) {
+  btn.addEventListener('click', () => {
+    selectedSize = btn.dataset.sz;
+    for (const b of document.querySelectorAll('[data-sz]')) b.classList.remove('active');
+    btn.classList.add('active');
+  });
+}
+
+for (const padBtn of document.querySelectorAll('.pad button')) {
+  const k = padBtn.dataset.key;
+  padBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); keys.add(k); });
+  padBtn.addEventListener('pointerup', () => keys.delete(k));
+  padBtn.addEventListener('pointerleave', () => keys.delete(k));
+  padBtn.addEventListener('pointercancel', () => keys.delete(k));
+}
+
+fireBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); firingHeld = true; triggerAction('fire'); });
+fireBtn.addEventListener('pointerup', () => { firingHeld = false; });
+fireBtn.addEventListener('pointerleave', () => { firingHeld = false; });
+fireBtn.addEventListener('pointercancel', () => { firingHeld = false; });
+
+thrustBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); triggerAction('thrust'); });
+skillBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); triggerAction('skill'); });
+
+window.addEventListener('keydown', (e) => {
+  if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) e.preventDefault();
+  keys.add(e.code);
+  if (e.code === 'Space') { firingHeld = true; triggerAction('fire'); }
+  if (e.code === 'KeyE') triggerAction('skill');
+  if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') triggerAction('thrust');
+  if (e.code === 'KeyR') restartBtn.click();
+});
+
+window.addEventListener('keyup', (e) => {
+  keys.delete(e.code);
+  if (e.code === 'Space') firingHeld = false;
+});
+
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
